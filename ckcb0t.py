@@ -1,6 +1,6 @@
 from jabberbot import JabberBot, botcmd
 from datetime import datetime
-from TatortFundus import Episode
+from tatort_fundus import Episode
 from google import search
 import sys
 import re
