@@ -18,8 +18,13 @@ class LinkFile(object):
 
     def write(self, url):
         logfile = self._open_file()
-        logfile.write(url)
+        lines_seen = set(logfile)
+        if url not in lines_seen:
+            logfile.write(url)
         logfile.close()
+
+    def show(self, lines):
+        pass
 
 
 class MUCJabberBot(JabberBot):
