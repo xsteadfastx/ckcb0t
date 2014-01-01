@@ -7,6 +7,21 @@ import re
 import wikipedia
 
 
+class LinkFile(object):
+    """ class to handle the link text file """
+
+    def __init__(self, logfile):
+        self.logfile = logfile
+
+    def _open_file(self):
+        return open(self.logfile, 'a+')
+
+    def write(self, url):
+        logfile = self._open_file()
+        logfile.write(url)
+        logfile.close()
+
+
 class MUCJabberBot(JabberBot):
 
     ''' Add features in JabberBot to allow it to handle specific
@@ -47,8 +62,10 @@ class MUCJabberBot(JabberBot):
 
         urls = re.compile('http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+')
         if urls.match(message) and self.get_sender_username(mess) != 'ckcb0t':
-            reply = urls.findall(message)[0]
-            self.send_simple_reply(mess, reply)
+            #reply = urls.findall(message)[0]
+            #self.send_simple_reply(mess, reply)
+            logfile = LinkFile('urls.log')
+            logfile.write(urls.findall(message)[0]+'\n')
 
 
 class ckcb0t(MUCJabberBot):
