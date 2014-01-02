@@ -23,8 +23,10 @@ class LinkFile(object):
             logfile.write(url)
         logfile.close()
 
-    def show(self, lines):
-        pass
+    def show(self, linenumbers):
+        lines = self._open_file().readlines()
+        linenumbers = int(linenumbers)
+        return lines[-linenumbers:]
 
 
 class MUCJabberBot(JabberBot):
@@ -118,6 +120,13 @@ class ckcb0t(MUCJabberBot):
     @botcmd
     def google(self, mess, args):
         for i in search(args, stop=5):
+            self.send_simple_reply(mess, i)
+
+    @botcmd
+    def fun(self, mess, args):
+        """ show fun lines """
+        logfile = LinkFile('urls.log')
+        for i in logfile.show(args):
             self.send_simple_reply(mess, i)
 
 if __name__ == '__main__':
