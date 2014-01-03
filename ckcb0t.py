@@ -131,7 +131,7 @@ class ckcb0t(MUCJabberBot):
 
 if __name__ == '__main__':
 
-    username = 'newz@xsteadfastx.org'
+    username = 'ckcb0t@xsteadfastx.org'
     password = sys.argv[1]
     nickname = 'ckcb0t'
     chatroom = 'ckc-chan@conference.jabber.ccc.de'
