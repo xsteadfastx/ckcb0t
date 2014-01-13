@@ -101,7 +101,7 @@ class ckcb0t(MUCJabberBot):
 
     @botcmd
     def tatort_beschreibung(self, mess, args):
-        """Gibt Episoden-Zusammenfasslung aus"""
+        """Gibt Episoden-Zusammenfassung aus"""
         episode = Episode(args)
         reply = episode.summary
         self.send_simple_reply(mess, reply)
