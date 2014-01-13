@@ -30,6 +30,8 @@ class LinkFile(object):
 
 
 class MUCJabberBot(JabberBot):
+    PING_FREQUENCY = 60
+    PING_TIMEOUT = 10
 
     ''' Add features in JabberBot to allow it to handle specific
     caractheristics of multiple users chatroom (MUC). '''
