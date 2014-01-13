@@ -1,6 +1,6 @@
 from jabberbot import JabberBot, botcmd
 from datetime import datetime
-from tatort_fundus import Episode
+from tatort_fundus import Episode, ermittler_uebersicht
 from google import search
 import sys
 import re
@@ -114,7 +114,14 @@ class ckcb0t(MUCJabberBot):
         self.send_simple_reply(mess, reply)
 
     @botcmd
+    def tatort_ermittler(self, mess, args):
+        """Gibt alle Tatort Ermittler aus"""
+        for i in ermittler_uebersicht():
+            self.send_simple_reply(mess, i)
+
+    @botcmd
     def wiki(self, mess, args):
+        """Beschreinung aus der Wikipedia"""
         wikipedia.set_lang('de')
         reply = wikipedia.summary(args, sentences=1)
         self.send_simple_reply(mess, reply)
