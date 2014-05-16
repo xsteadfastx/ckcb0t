@@ -34,3 +34,8 @@ nosetests.xml
 .mr.developer.cfg
 .project
 .pydevproject
+
+# OWN STUFF
+*.log
+config.py
+.ropeproject

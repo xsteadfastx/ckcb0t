@@ -1,14 +1,16 @@
-from jabberbot import JabberBot, botcmd
-from datetime import datetime
-from tatort_fundus import Episode, ermittler_uebersicht
-from google import search
-import sys
+import inspect
+import logging
 import re
+import sleekxmpp
 import wikipedia
 
 
+# import config file
+from config import *
+
+
 class LinkFile(object):
-    """ class to handle the link text file """
+    ''' class to handle the link text file '''
 
     def __init__(self, logfile):
         self.logfile = logfile
@@ -29,122 +31,236 @@ class LinkFile(object):
         return lines[-linenumbers:]
 
 
-class MUCJabberBot(JabberBot):
-    PING_FREQUENCY = 60
-    PING_TIMEOUT = 10
+def botcmd(*args, **kwargs):
+    ''' decorator for bot command functions '''
 
-    ''' Add features in JabberBot to allow it to handle specific
-    caractheristics of multiple users chatroom (MUC). '''
+    def decorate(func):
+        setattr(func, '_ckcb0t_command', True)
+        setattr(func, '_ckcb0t_command_name', func.__name__)
+        return func
 
-    def __init__(self, *args, **kwargs):
-        ''' Initialize variables. '''
-
-        # answer only direct messages or not?
-        self.only_direct = kwargs.get('only_direct', False)
-        try:
-            del kwargs['only_direct']
-        except KeyError:
-            pass
-
-        # initialize jabberbot
-        super(MUCJabberBot, self).__init__(*args, **kwargs)
-
-        # create a regex to check if a message is a direct message
-        user, domain = str(self.jid).split('@')
-        self.direct_message_re = re.compile('^%s(@%s)?[^\w]? ' \
-                % (user, domain))
-
-    def callback_message(self, conn, mess):
-        ''' Changes the behaviour of the JabberBot in order to allow
-        it to answer direct messages. This is used often when it is
-        connected in MUCs (multiple users chatroom). '''
-
-        message = mess.getBody()
-        if not message:
-            return
-
-        if self.direct_message_re.match(message):
-            mess.setBody(' '.join(message.split(' ', 1)[1:]))
-            return super(MUCJabberBot, self).callback_message(conn, mess)
-        elif not self.only_direct:
-            return super(MUCJabberBot, self).callback_message(conn, mess)
-
-        urls = re.compile('http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+')
-        if urls.match(message) and self.get_sender_username(mess) != 'ckcb0t':
-            #reply = urls.findall(message)[0]
-            #self.send_simple_reply(mess, reply)
-            logfile = LinkFile('urls.log')
-            logfile.write(urls.findall(message)[0]+'\n')
+    if len(args):
+        return decorate(args[0], **kwargs)
+    else:
+        return lambda func: decorate(func, **kwargs)
 
 
-class ckcb0t(MUCJabberBot):
+def botregex(re):
+    ''' decorator for regex listeners '''
+    def decorate(func):
+        setattr(func, '_ckcb0t_regex', True)
+        setattr(func, '_ckcb0t_regex_re', re)
+        setattr(func, '_ckcb0t_regex_name', func.__name__)
+        return func
+    return decorate
+
+
+class MUCBot(sleekxmpp.ClientXMPP):
+
+    def __init__(self, jid, password, room, nick):
+        sleekxmpp.ClientXMPP.__init__(self, jid, password)
+
+        self.room = room
+        self.nick = nick
+
+        # The session_start event will be triggered when
+        # the bot establishes its connection with the server
+        # and the XML streams are ready for use. We want to
+        # listen for this event so that we we can initialize
+        # our roster.
+        self.add_event_handler("session_start", self.start)
+
+        # The groupchat_message event is triggered whenever a message
+        # stanza is received from any chat room. If you also also
+        # register a handler for the 'message' event, MUC messages
+        # will be processed by both handlers.
+        self.add_event_handler("groupchat_message", self.muc_message)
+
+        # The groupchat_presence event is triggered whenever a
+        # presence stanza is received from any chat room, including
+        # any presences you send yourself. To limit event handling
+        # to a single room, use the events muc::room@server::presence,
+        # muc::room@server::got_online, or muc::room@server::got_offline.
+        self.add_event_handler("muc::%s::got_online" % self.room,
+                               self.muc_online)
+
+        # collect commands and regex listeners out of function attributes.
+        # it fills two dictionaries with the function as value
+        self.commands = {}
+        self.regex_listeners = {}
+        self.docstrings = {}
+        for name, value in inspect.getmembers(self):
+            if inspect.ismethod(value) and getattr(
+                    value, '_ckcb0t_command', False):
+                name = getattr(value, '_ckcb0t_command_name')
+                self.commands[name] = value
+                self.docstrings[name] = inspect.getdoc(value)
+            elif inspect.ismethod(value) and getattr(
+                    value, '_ckcb0t_regex', False):
+                regex = re.compile(getattr(value, '_ckcb0t_regex_re'))
+                self.regex_listeners[regex] = value
+
+    def start(self, event):
+        """
+        Process the session_start event.
+
+        Typical actions for the session_start event are
+        requesting the roster and broadcasting an initial
+        presence stanza.
+
+        Arguments:
+            event -- An empty dictionary. The session_start
+                     event does not provide any additional
+                     data.
+        """
+        self.get_roster()
+        self.send_presence()
+        self.plugin['xep_0045'].joinMUC(self.room,
+                                        self.nick,
+                                        # If a room password is needed, use:
+                                        # password=the_room_password,
+                                        wait=True)
+
+    def muc_message(self, msg):
+        """
+        Process incoming message stanzas from any chat room. Be aware
+        that if you also have any handlers for the 'message' event,
+        message stanzas may be processed by both handlers, so check
+        the 'type' attribute when using a 'message' event handler.
+
+        Whenever the bot's nickname is mentioned, respond to
+        the message.
+
+        IMPORTANT: Always check that a message is not from yourself,
+                   otherwise you will create an infinite loop responding
+                   to your own messages.
+
+        This handler will reply to messages that mention
+        the bot's nickname.
+
+        Arguments:
+            msg -- The received message stanza. See the documentation
+                   for stanza objects and the Message stanza to see
+                   how it may be used.
+        """
+
+        if msg['mucnick'] != self.nick:
+            # checks for regex and fires function if matched
+            for regex, function in self.regex_listeners.iteritems():
+                if regex.match(msg['body']):
+                    reply = function(msg['body'])
+                    # sends the function return as message if there
+                    if reply:
+                        if isinstance(reply, list):
+                            for item in reply:
+                                self.send_message(mto=msg['from'].bare,
+                                                  mbody=item,
+                                                  mtype='groupchat')
+                        else:
+                            self.send_message(mto=msg['from'].bare,
+                                              mbody=reply,
+                                              mtype='groupchat')
+            # checks for bot commands and fires function if needed
+            if msg['body'].startswith('!'):
+                cmd = msg['body'].split(' ', 1)[0].split('!')[1]
+                args = msg['body'].split(cmd)[1].lstrip()
+                if cmd in self.commands:
+                    try:
+                        if args:
+                            reply = self.commands[cmd](args)
+                        else:
+                            reply = self.commands[cmd]()
+                    except Exception:
+                        reply = 'An error happend'
+                    if isinstance(reply, list):
+                        for item in reply:
+                            self.send_message(mto=msg['from'].bare,
+                                              mbody=item,
+                                              mtype='groupchat')
+                    else:
+                        self.send_message(mto=msg['from'].bare,
+                                          mbody=reply,
+                                          mtype='groupchat')
+
+    def muc_online(self, presence):
+        """
+        Process a presence stanza from a chat room. In this case,
+        presences from users that have just come online are
+        handled by sending a welcome message that includes
+        the user's nickname and role in the room.
+
+        Arguments:
+            presence -- The received presence stanza. See the
+                        documentation for the Presence stanza
+                        to see how else it may be used.
+        """
+        if presence['muc']['nick'] != self.nick:
+            self.send_message(mto=presence['from'].bare,
+                              mbody="Moinsen %s" % (presence['muc']['nick']),
+                              mtype='groupchat')
+
+
+class ckcb0t(MUCBot):
+    @botcmd
+    def echo(self, message):
+        ''' echoes message '''
+        return message
 
     @botcmd
-    def date(self, mess, args):
-        """Gibt das Datum aus"""
-        reply = datetime.now().strftime('%Y-%m-%d')
-        self.send_simple_reply(mess, reply)
+    def ping(self):
+        ''' ping pong '''
+        return 'pong'
 
     @botcmd
-    def tatort_nummer(self, mess, args):
-        """Gibt die Episodennummer aus"""
-        episode = Episode(args)
-        reply = episode.episode_number
-        self.send_simple_reply(mess, reply)
+    def help(self):
+        ''' show this help '''
+        collected_docstrings = []
+        for name, docstring in self.docstrings.iteritems():
+            collected_docstrings.append(name + ': ' + docstring)
+        return collected_docstrings
 
     @botcmd
-    def tatort_schauspieler(self, mess, args):
-        """Gibt die Schauspieler der Episode aus"""
-        episode = Episode(args)
-        for i in episode.actors:
-            self.send_simple_reply(mess, i)
-
-    @botcmd
-    def tatort_beschreibung(self, mess, args):
-        """Gibt Episoden-Zusammenfassung aus"""
-        episode = Episode(args)
-        reply = episode.summary
-        self.send_simple_reply(mess, reply)
-
-    @botcmd
-    def tatort_datum(self, mess, args):
-        """Erstsendedatum"""
-        episode = Episode(args)
-        reply = episode.erstsendung
-        self.send_simple_reply(mess, reply)
-
-    @botcmd
-    def tatort_ermittler(self, mess, args):
-        """Gibt alle Tatort Ermittler aus"""
-        for i in ermittler_uebersicht():
-            self.send_simple_reply(mess, i)
-
-    @botcmd
-    def wiki(self, mess, args):
-        """Beschreinung aus der Wikipedia"""
-        wikipedia.set_lang('de')
-        reply = wikipedia.summary(args, sentences=1)
-        self.send_simple_reply(mess, reply)
-
-    @botcmd
-    def google(self, mess, args):
-        for i in search(args, stop=5):
-            self.send_simple_reply(mess, i)
-
-    @botcmd
-    def fun(self, mess, args):
-        """ show fun lines """
+    def fun(self, args):
+        ''' show fun lines '''
         logfile = LinkFile('urls.log')
-        for i in logfile.show(args):
-            self.send_simple_reply(mess, i)
+        return logfile.show(args)
+
+    @botcmd
+    def wiki(self, args):
+        ''' wikipedia search '''
+        wikipedia.set_lang('de')
+        return wikipedia.summary(args, sentences=3)
+
+    @botregex(
+        'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+')
+    def urls(self, message):
+        ''' matches urls and doing stuff '''
+        logfile = LinkFile('urls.log')
+        print 'write ' + message + ' to logfile'
+        logfile.write(message + '\n')
+
 
 if __name__ == '__main__':
+    # Logging
+    logging.basicConfig(level=30,
+                        format='%(levelname)-8s %(message)s')
 
-    username = 'ckcb0t@xsteadfastx.org'
-    password = sys.argv[1]
-    nickname = 'ckcb0t'
-    chatroom = 'ckc-chan@conference.jabber.ccc.de'
+    # Setup Bot and register plugins.
+    xmpp = ckcb0t(JID, PASSWORD, CHANNEL, CHANNEL_NICK)
+    xmpp.register_plugin('xep_0030')  # Service Discovery
+    xmpp.register_plugin('xep_0045')  # Multi-User Chat
+    xmpp.register_plugin('xep_0199')  # XMPP Ping
 
-    mucbot = ckcb0t(username, password, only_direct=True, debug=True)
-    mucbot.join_room(chatroom, nickname)
-    mucbot.serve_forever()
+    # Connect to the XMPP server and start processing XMPP stanzas.
+    if xmpp.connect():
+        # If you do not have the dnspython library installed, you will need
+        # to manually specify the name of the server if it does not match
+        # the one in the JID. For example, to use Google Talk you would
+        # need to use:
+        #
+        # if xmpp.connect(('talk.google.com', 5222)):
+        #     ...
+        xmpp.process(block=True)
+        print("Done")
+    else:
+        print("Unable to connect.")
