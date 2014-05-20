@@ -17,7 +17,7 @@ def get_website_title(url):
     ''' getting website title '''
     r = requests.get(url)
     soup = BeautifulSoup(r.text)
-    return soup.title.text
+    return soup.title.text.strip()
 
 
 class LinkFile(object):
@@ -130,6 +130,12 @@ class MUCBot(sleekxmpp.ClientXMPP):
                     value, '_ckcb0t_thread', False):
                 self.threads.append(Thread(target=value))
 
+    def ckcb0t_send_msg(self, message):
+        ''' send groupchat message '''
+        self.send_message(mto=self.room,
+                          mbody=message,
+                          mtype='groupchat')
+
     def start(self, event):
         """
         Process the session_start event.
@@ -181,39 +187,18 @@ class MUCBot(sleekxmpp.ClientXMPP):
             # checks for regex and fires function if matched
             for regex, function in self.regex_listeners.iteritems():
                 if regex.match(msg['body']):
-                    reply = function(msg['body'])
-                    # sends the function return as message if there
-                    if reply:
-                        if isinstance(reply, list):
-                            for item in reply:
-                                self.send_message(mto=msg['from'].bare,
-                                                  mbody=item,
-                                                  mtype='groupchat')
-                        else:
-                            self.send_message(mto=msg['from'].bare,
-                                              mbody=reply,
-                                              mtype='groupchat')
+                    function(msg['body'])
             # checks for bot commands and fires function if needed
             if msg['body'].startswith('!'):
                 cmd = msg['body'].split(' ', 1)[0].split('!')[1]
                 args = msg['body'].split(cmd)[1].lstrip()
                 if cmd in self.commands:
-                    try:
-                        if args:
-                            reply = self.commands[cmd](args)
-                        else:
-                            reply = self.commands[cmd]()
-                    except Exception:
-                        reply = 'An error happend'
-                    if isinstance(reply, list):
-                        for item in reply:
-                            self.send_message(mto=msg['from'].bare,
-                                              mbody=item,
-                                              mtype='groupchat')
+                    if args:
+                        self.commands[cmd](args)
                     else:
-                        self.send_message(mto=msg['from'].bare,
-                                          mbody=reply,
-                                          mtype='groupchat')
+                        self.commands[cmd]()
+                else:
+                    self.ckcb0t_send_msg('Command not found. Use !help')
 
     def muc_online(self, presence):
         """
@@ -238,42 +223,45 @@ class ckcb0t(MUCBot):
     @botcmd
     def echo(self, message):
         ''' echoes message '''
-        return message
+        self.ckcb0t_send_msg(message)
 
     @botcmd
     def ping(self):
         ''' ping pong '''
-        return 'pong'
+        self.ckcb0t_send_msg('pong')
 
     @botcmd
     def help(self):
         ''' show this help '''
         collected_docstrings = []
         for name, docstring in self.docstrings.iteritems():
-            collected_docstrings.append(name + ': ' + docstring)
-        return collected_docstrings
+            collected_docstrings.append('!' + name + ': ' + docstring)
+        for docstring in collected_docstrings:
+            self.ckcb0t_send_msg(docstring)
 
     @botcmd
     def fun(self, args):
         ''' show fun lines '''
         logfile = LinkFile('urls.log')
-        return logfile.show(args)
+        for line in logfile.show(args):
+            self.ckcb0t_send_msg(line)
 
     @botcmd
     def wiki(self, args):
         ''' wikipedia search '''
         wikipedia.set_lang('de')
-        return wikipedia.summary(args, sentences=3)
+        reply = wikipedia.summary(args, sentences=3)
+        self.ckcb0t_send_msg(reply)
 
     @botregex(
         'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+')
     def urls(self, message):
         ''' matches urls and doing stuff '''
         logfile = LinkFile('urls.log')
-        print 'write ' + message + ' to logfile'
         logfile.write(message + '\n')
         try:
-            return get_website_title(message)
+            reply = get_website_title(message)
+            self.ckcb0t_send_msg(reply)
         except Exception:
             pass
 
@@ -281,9 +269,7 @@ class ckcb0t(MUCBot):
     def thread_ping(self):
         ''' sends every hour a ping to the room '''
         while True:
-            self.send_message(mto=self.room,
-                              mbody='ping',
-                              mtype='groupchat')
+            self.ckcb0t_send_msg('ping')
             time.sleep(3600)
 
 
