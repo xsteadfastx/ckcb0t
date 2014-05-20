@@ -1,7 +1,11 @@
+from bs4 import BeautifulSoup
+from threading import Thread
 import inspect
 import logging
 import re
+import requests
 import sleekxmpp
+import time
 import wikipedia
 
 
@@ -9,7 +13,15 @@ import wikipedia
 from config import *
 
 
+def get_website_title(url):
+    ''' getting website title '''
+    r = requests.get(url)
+    soup = BeautifulSoup(r.text)
+    return soup.title.text
+
+
 class LinkFile(object):
+
     ''' class to handle the link text file '''
 
     def __init__(self, logfile):
@@ -55,6 +67,20 @@ def botregex(re):
     return decorate
 
 
+def botthread(*args, **kwargs):
+    ''' decorator for bot command functions '''
+
+    def decorate(func):
+        setattr(func, '_ckcb0t_thread', True)
+        setattr(func, '_ckcb0t_thread_name', func.__name__)
+        return func
+
+    if len(args):
+        return decorate(args[0], **kwargs)
+    else:
+        return lambda func: decorate(func, **kwargs)
+
+
 class MUCBot(sleekxmpp.ClientXMPP):
 
     def __init__(self, jid, password, room, nick):
@@ -89,6 +115,7 @@ class MUCBot(sleekxmpp.ClientXMPP):
         self.commands = {}
         self.regex_listeners = {}
         self.docstrings = {}
+        self.threads = []
         for name, value in inspect.getmembers(self):
             if inspect.ismethod(value) and getattr(
                     value, '_ckcb0t_command', False):
@@ -99,6 +126,9 @@ class MUCBot(sleekxmpp.ClientXMPP):
                     value, '_ckcb0t_regex', False):
                 regex = re.compile(getattr(value, '_ckcb0t_regex_re'))
                 self.regex_listeners[regex] = value
+            elif inspect.ismethod(value) and getattr(
+                    value, '_ckcb0t_thread', False):
+                self.threads.append(Thread(target=value))
 
     def start(self, event):
         """
@@ -120,6 +150,9 @@ class MUCBot(sleekxmpp.ClientXMPP):
                                         # If a room password is needed, use:
                                         # password=the_room_password,
                                         wait=True)
+
+        for thread in self.threads:
+            thread.start()
 
     def muc_message(self, msg):
         """
@@ -201,6 +234,7 @@ class MUCBot(sleekxmpp.ClientXMPP):
 
 
 class ckcb0t(MUCBot):
+
     @botcmd
     def echo(self, message):
         ''' echoes message '''
@@ -238,6 +272,19 @@ class ckcb0t(MUCBot):
         logfile = LinkFile('urls.log')
         print 'write ' + message + ' to logfile'
         logfile.write(message + '\n')
+        try:
+            return get_website_title(message)
+        except Exception:
+            pass
+
+    @botthread
+    def thread_ping(self):
+        ''' sends every hour a ping to the room '''
+        while True:
+            self.send_message(mto=self.room,
+                              mbody='ping',
+                              mtype='groupchat')
+            time.sleep(3600)
 
 
 if __name__ == '__main__':
